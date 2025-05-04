@@ -111,6 +111,7 @@ void Application::render() {
     renderTexture.display();
 
     sf::Sprite spr(renderTexture.getTexture());
+
     float scaleX = static_cast<float>(window.getSize().x) / renderTexture.getSize().x;
     float scaleY = static_cast<float>(window.getSize().y) / renderTexture.getSize().y;
 
