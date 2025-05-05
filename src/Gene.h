@@ -14,11 +14,16 @@ public:
 
     Gene(Shape type, sf::Vector2f pos, float size, sf::Color color);
 
+    // Default constructor needed for vector resize/emplace_back default construction
+    Gene() : m_type(Shape::Circle), m_pos({0, 0}), m_size(0), m_color({0, 0, 0, 0}) {
+    }
+
+
     void draw(sf::RenderTarget &target) const;
 
     Shape getType() const;
 
-    int getSize() const;
+    float getSize() const; // Changed return type to float
 
     sf::Color getColor() const;
 
