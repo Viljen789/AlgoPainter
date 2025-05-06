@@ -1,7 +1,3 @@
-//
-// Created by vilje on 05/05/2025.
-//
-
 #ifndef PIXEL_H
 #define PIXEL_H
 #pragma once

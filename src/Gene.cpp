@@ -1,10 +1,6 @@
-//
-// Created by vilje on 03/05/2025.
-//
-
 #include "Gene.h"
 #include <iostream>
-#include <SFML/Graphics/CircleShape.hpp> // Include specific shape headers for draw method
+#include <SFML/Graphics/CircleShape.hpp>
 #include <SFML/Graphics/ConvexShape.hpp>
 #include <SFML/Graphics/RectangleShape.hpp>
 
@@ -13,15 +9,12 @@ Gene::Gene(Shape type, sf::Vector2f pos, float size, sf::Color color): m_type(ty
                                                                        m_pos(pos),
                                                                        m_size(size),
                                                                        m_color(color) {
-    // std::cout << "Created gene of size: " << m_size << " at (" << m_pos.x << ", " << m_pos.y << ")" << std::endl;
 }
 
 void Gene::draw(sf::RenderTarget &target) const {
-    // SFML drawing happens here, used for the final best image render
     switch (m_type) {
         case Shape::Circle: {
-            // SFML CircleShape uses radius, not diameter for size
-            sf::CircleShape circle(m_size); // Assuming m_size is radius now based on SFML
+            sf::CircleShape circle(m_size);
             circle.setPosition(m_pos);
             circle.setFillColor(m_color);
             target.draw(circle);
@@ -30,13 +23,10 @@ void Gene::draw(sf::RenderTarget &target) const {
         case Shape::Triangle: {
             sf::ConvexShape triangle;
             triangle.setPointCount(3);
-            // Assuming the size is the side length for an equilateral triangle for SFML display
-            // Note: This might differ from how size is used in the GPU kernel's AABB/barycentric math
-            float s = m_size; // Use m_size as side length
-            // Equilateral triangle points relative to origin, then translated by m_pos
-            triangle.setPoint(0, {0, 0}); // Top point
-            triangle.setPoint(1, {s, 0}); // Bottom right
-            triangle.setPoint(2, {s / 2.0f, s * 0.866025f}); // Bottom left (sqrt(3)/2 * s)
+            float s = m_size;
+            triangle.setPoint(0, {0, 0});
+            triangle.setPoint(1, {s, 0});
+            triangle.setPoint(2, {s / 2.0f, s * 0.866025f});
 
             triangle.setPosition(m_pos);
             triangle.setFillColor(m_color);
@@ -44,7 +34,6 @@ void Gene::draw(sf::RenderTarget &target) const {
             break;
         }
         case Shape::Square: {
-            // Assuming size is the side length
             sf::RectangleShape square({m_size, m_size});
             square.setPosition(m_pos);
             square.setFillColor(m_color);
@@ -62,7 +51,6 @@ Gene::Shape Gene::getType() const {
 }
 
 float Gene::getSize() const {
-    // Changed return type
     return m_size;
 }
 
