@@ -19,9 +19,9 @@ __device__ inline void blendPixels_device(Pixel &background, const Pixel &foregr
     unsigned int alpha = foreground.a;
     unsigned int invAlpha = 255 - alpha;
 
-    unsigned int r = (unsigned int) background.r * invAlpha + (unsigned int) foreground.r * alpha;
-    unsigned int g = (unsigned int) background.g * invAlpha + (unsigned int) foreground.g * alpha;
-    unsigned int b = (unsigned int) background.b * invAlpha + (unsigned int) foreground.b * alpha;
+    unsigned int r = static_cast<unsigned int>(background.r) * invAlpha + static_cast<unsigned int>(foreground.r) * alpha;
+    unsigned int g = static_cast<unsigned int>(background.g) * invAlpha + static_cast<unsigned int>(foreground.g) * alpha;
+    unsigned int b = static_cast<unsigned int>(background.b) * invAlpha + static_cast<unsigned int>(foreground.b) * alpha;
 
     background.r = static_cast<uint8_t>(r >> 8);
     background.g = static_cast<uint8_t>(g >> 8);
@@ -227,4 +227,65 @@ void CudaRasterizer::launchClearBuffersKernel(Pixel *d_renderedBuffers,
     clearBuffersKernel<<<blocksNeeded, threadsPerBlock>>>(
         d_renderedBuffers, populationSize, width, height, clearColor
     );
+}
+
+__global__ void fitnessKernel_optimized(const Pixel *renderedBuffers, const Pixel *targetImage,
+                                        float *fitnessResults, unsigned int numIndividuals,
+                                        unsigned int imgWidth, unsigned int imgHeight) {
+    unsigned int individualIdx = blockIdx.x;
+    if (individualIdx >= numIndividuals) return;
+
+    const Pixel *rendered = renderedBuffers + static_cast<size_t>(individualIdx) * imgWidth * imgHeight;
+    unsigned int totalPixels = imgWidth * imgHeight;
+
+    extern __shared__ float sdata[];
+
+    float mySum = 0.0f;
+
+    // Process 4 pixels at a time for better memory throughput
+    unsigned int i = threadIdx.x * 4;
+    unsigned int stride = blockDim.x * 4;
+
+    for (; i + 3 < totalPixels; i += stride) {
+        #pragma unroll
+        for (int k = 0; k < 4; k++) {
+            const Pixel &c1 = rendered[i + k];
+            const Pixel &c2 = targetImage[i + k];
+            int dr = c1.r - c2.r;
+            int dg = c1.g - c2.g;
+            int db = c1.b - c2.b;
+            mySum -= static_cast<float>(dr * dr + dg * dg + db * db);
+        }
+    }
+
+    // Handle remaining pixels
+    for (; i < totalPixels; i += blockDim.x) {
+        const Pixel &c1 = rendered[i];
+        const Pixel &c2 = targetImage[i];
+        int dr = c1.r - c2.r;
+        int dg = c1.g - c2.g;
+        int db = c1.b - c2.b;
+        mySum -= static_cast<float>(dr * dr + dg * dg + db * db);
+    }
+
+    sdata[threadIdx.x] = mySum;
+    __syncthreads();
+
+    // Warp-level reduction (faster for modern GPUs)
+    for (unsigned int s = blockDim.x / 2; s > 32; s >>= 1) {
+        if (threadIdx.x < s) sdata[threadIdx.x] += sdata[threadIdx.x + s];
+        __syncthreads();
+    }
+
+    if (threadIdx.x < 32) {
+        volatile float *vsmem = sdata;
+        vsmem[threadIdx.x] += vsmem[threadIdx.x + 32];
+        vsmem[threadIdx.x] += vsmem[threadIdx.x + 16];
+        vsmem[threadIdx.x] += vsmem[threadIdx.x + 8];
+        vsmem[threadIdx.x] += vsmem[threadIdx.x + 4];
+        vsmem[threadIdx.x] += vsmem[threadIdx.x + 2];
+        vsmem[threadIdx.x] += vsmem[threadIdx.x + 1];
+    }
+
+    if (threadIdx.x == 0) fitnessResults[individualIdx] = sdata[0];
 }

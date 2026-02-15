@@ -6,6 +6,7 @@
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <cstdint>
 
 #include "Application.h"
 #include "Fitness.h"
@@ -23,8 +24,8 @@ Application::Application()
       cudaRasterizer(1, 1) {
     std::cout << "Current working directory: " << std::filesystem::current_path() << std::endl;
 
-    if (!targetImage.loadFromFile("../assets/AstridOgKnut.jpg")) {
-        std::cerr << "ERROR: Failed to load target image from: " << std::filesystem::absolute("../assets/SexyEmil.jpg")
+    if (!targetImage.loadFromFile("../assets/cool-dog.jpg")) {
+        std::cerr << "ERROR: Failed to load target image from: " << std::filesystem::absolute("../assets/cool-dog.jpg")
                 <<
                 std::endl;
         std::cerr << "Please make sure the image exists at this location." << std::endl;
@@ -34,13 +35,15 @@ Application::Application()
     auto ts = targetImage.getSize();
     canvasW = ts.x;
     canvasH = ts.y;
+    unsigned numPixels = canvasW * canvasH;
+    minPossibleFitness = -static_cast<float>(255 * 255 * 3) * numPixels;
 
     std::cout << "TargetImage size: " << ts.x << ", " << ts.y << std::endl;
 
     targetPixels.resize(static_cast<size_t>(canvasW) * canvasH);
     for (unsigned y = 0; y < canvasH; y++) {
         for (unsigned x = 0; x < canvasW; x++) {
-            sf::Color c = targetImage.getPixel(x, y);
+            sf::Color c = targetImage.getPixel({x, y});
             targetPixels[static_cast<size_t>(y) * canvasW + x] = {c.r, c.g, c.b, 255};
         }
     }
@@ -71,9 +74,8 @@ Application::Application()
 
     population.reserve(POPULATION_SIZE);
     fitnessValues.resize(POPULATION_SIZE);
-    population.emplace_back();
-    population[0].reserve(GENES_PER_INDIVIDUAL);
-    for (int k = 1; k < POPULATION_SIZE; k++) {
+
+    for (int k = 0; k < POPULATION_SIZE; k++) {
         Individual indiv;
         indiv.reserve(GENES_PER_INDIVIDUAL);
         for (int i = 0; i < GENES_PER_INDIVIDUAL; i++) {
@@ -81,7 +83,8 @@ Application::Application()
             sf::Vector2f pos{xDist(rng), yDist(rng)};
             float size = sizeDist(rng);
             sf::Color color{
-                static_cast<std::uint8_t>(colorDist(rng)), static_cast<std::uint8_t>(colorDist(rng)),
+                static_cast<std::uint8_t>(colorDist(rng)),
+                static_cast<std::uint8_t>(colorDist(rng)),
                 static_cast<std::uint8_t>(colorDist(rng)),
                 static_cast<std::uint8_t>(std::uniform_int_distribution<int>(50, 200)(rng))
             };
@@ -90,11 +93,7 @@ Application::Application()
         population.push_back(std::move(indiv));
     }
 
-    if (POPULATION_SIZE > 1) {
-        bestIndividual = population[1];
-    } else {
-        bestIndividual.reserve(GENES_PER_INDIVIDUAL);
-    }
+    bestIndividual = population[0];
 
     cudaRasterizer.uploadPopulation(population, downscaledTargetPixels);
 }
@@ -183,10 +182,8 @@ void Application::run() {
 
                 float gensPerSecond = DISPLAY_FREQUENCY / elapsed;
                 std::cout << "Generation " << generationCount
-                        << " best fitness = " << fitnessValues[0]
-                        << " (resolution: 1/" << currentResolutionFactor
-                        << ", mode: " << (cudaRasterizer.isInitialized() ? "GPU" : "CPU")
-                        << ") | Perf: " << gensPerSecond << " generations/sec" << std::endl;
+                        << " | fitness=" << bestFitness
+                        << " | " << gensPerSecond << " gen/s" << std::endl;
             } else if (SHOW_STATS && generationCount == 0) {
                 std::cout << "Generation " << generationCount
                         << " (resolution: 1/" << currentResolutionFactor
@@ -212,12 +209,11 @@ void Application::run() {
 }
 
 void Application::processEvents() {
-    sf::Event event;
-    while (window.pollEvent(event)) {
-        if (event.type == sf::Event::Closed) {
+    while (const auto event = window.pollEvent()) {
+        if (event->is<sf::Event::Closed>()) {
             window.close();
-        } else if (event.type == sf::Event::KeyPressed) {
-            if (event.key.code == sf::Keyboard::S) {
+        } else if (const auto *key = event->getIf<sf::Event::KeyPressed>()) {
+            if (key->code == sf::Keyboard::Key::S) {
                 saveCurrentImage();
             }
         }
@@ -227,7 +223,6 @@ void Application::processEvents() {
 void Application::saveCurrentImage() {
     std::vector<Pixel> bestImagePixels = cudaRasterizer.getRenderedImage(0);
 
-    sf::Image bestImage;
     unsigned renderW = cudaRasterizer.isInitialized()
                            ? cudaRasterizer.getWidth()
                            : rasterizer.getWidth();
@@ -235,15 +230,21 @@ void Application::saveCurrentImage() {
                            ? cudaRasterizer.getHeight()
                            : rasterizer.getHeight();
 
-    bestImage.create(renderW, renderH, reinterpret_cast<const sf::Uint8 *>(bestImagePixels.data()));
+    sf::Texture tempTexture;
+    if (!tempTexture.resize({renderW, renderH})) {
+        std::cerr << "Failed to resize texture for saving" << std::endl;
+        return;
+    }
 
-    // Create output directory if it doesn't exist
+    tempTexture.update(reinterpret_cast<const std::uint8_t *>(bestImagePixels.data()));
+
+    sf::Image bestImage = tempTexture.copyToImage();
+
     std::filesystem::path outputDir = "../../output";
     if (!std::filesystem::exists(outputDir)) {
         std::filesystem::create_directory(outputDir);
     }
 
-    // Generate filename with timestamp and generation number
     auto t = std::time(nullptr);
     auto tm = *std::localtime(&t);
     std::ostringstream oss;
@@ -258,142 +259,62 @@ void Application::saveCurrentImage() {
     }
 }
 
+
 void Application::update() {
+    // 1. Evaluate fitness via GPU
     cudaRasterizer.renderAndEvaluate(downscaledTargetPixels, fitnessValues);
 
-    int bestIndex = 0;
-    float bestFit = fitnessValues[bestIndex];
-    for (int k = 1; k < POPULATION_SIZE; k++) {
-        if (fitnessValues[k] > bestFit) {
-            bestFit = fitnessValues[k];
-            bestIndex = k;
+    // 2. Find best individual
+    int bestIdx = 0;
+    float currentBestFitness = fitnessValues[0];
+    for (int i = 1; i < POPULATION_SIZE; i++) {
+        if (fitnessValues[i] > currentBestFitness) {
+            currentBestFitness = fitnessValues[i];
+            bestIdx = i;
         }
     }
-    bestIndividual = population[bestIndex];
 
+    // 3. Update global best
+    if (currentBestFitness > bestFitness) {
+        bestFitness = currentBestFitness;
+        bestIndividual = population[bestIdx];
+    }
+
+    // 4. Create new population
     std::vector<Individual> newPop;
     newPop.reserve(POPULATION_SIZE);
-    newPop.push_back(bestIndividual);
 
-    if (bestIndividual.size() != GENES_PER_INDIVIDUAL) {
-        std::cerr << "Warning: Best individual has " << bestIndividual.size()
-                << " genes, expected " << GENES_PER_INDIVIDUAL << std::endl;
+    // Elitism: keep best individuals
+    std::vector<std::pair<float, int>> sorted(POPULATION_SIZE);
+    for (int i = 0; i < POPULATION_SIZE; i++) {
+        sorted[i] = {fitnessValues[i], i};
+    }
+    std::partial_sort(sorted.begin(), sorted.begin() + ELITE_COUNT, sorted.end(), std::greater<>());
 
-        if (bestIndividual.empty()) {
-            bestIndividual.clear();
-            bestIndividual.reserve(GENES_PER_INDIVIDUAL);
-
-            std::uniform_real_distribution<float> xDist(0.0f, static_cast<float>(canvasW));
-            std::uniform_real_distribution<float> yDist(0.0f, static_cast<float>(canvasH));
-            std::uniform_real_distribution<float> sizeDist(5.0f, 50.0f);
-            std::uniform_int_distribution<int> colorDist(0, 255);
-
-            for (int i = 0; i < GENES_PER_INDIVIDUAL; i++) {
-                auto shape = static_cast<Gene::Shape>(std::uniform_int_distribution<int>(0, 2)(rng));
-                sf::Vector2f pos{xDist(rng), yDist(rng)};
-                float size = sizeDist(rng);
-                sf::Color color{
-                    static_cast<std::uint8_t>(colorDist(rng)),
-                    static_cast<std::uint8_t>(colorDist(rng)),
-                    static_cast<std::uint8_t>(colorDist(rng)),
-                    static_cast<std::uint8_t>(std::uniform_int_distribution<int>(50, 200)(rng))
-                };
-                bestIndividual.emplace_back(shape, pos, size, color);
-            }
-
-            newPop[0] = bestIndividual;
-        } else if (bestIndividual.size() < GENES_PER_INDIVIDUAL) {
-            while (bestIndividual.size() < GENES_PER_INDIVIDUAL) {
-                int srcIdx = std::uniform_int_distribution<int>(0, bestIndividual.size() - 1)(rng);
-                bestIndividual.push_back(bestIndividual[srcIdx]);
-            }
-            newPop[0] = bestIndividual;
-        } else if (bestIndividual.size() > GENES_PER_INDIVIDUAL) {
-            bestIndividual.resize(GENES_PER_INDIVIDUAL);
-            newPop[0] = bestIndividual;
-        }
+    for (int i = 0; i < ELITE_COUNT; i++) {
+        newPop.push_back(population[sorted[i].second]);
     }
 
-    Individual child1, child2;
-    child1.reserve(GENES_PER_INDIVIDUAL);
-    child2.reserve(GENES_PER_INDIVIDUAL);
-
-    std::vector<Individual> validatedPopulation;
-    validatedPopulation.reserve(POPULATION_SIZE);
-    validatedPopulation.push_back(bestIndividual);
-
-    for (int i = 1; i < POPULATION_SIZE && i < population.size(); i++) {
-        if (population[i].size() == GENES_PER_INDIVIDUAL) {
-            validatedPopulation.push_back(population[i]);
-        } else {
-            Individual newIndiv = bestIndividual;
-            mutateIndividual(newIndiv, rng, canvasW, canvasH, MUTATION_RATE * 5);
-            validatedPopulation.push_back(newIndiv);
-        }
-    }
-
-    while (validatedPopulation.size() < POPULATION_SIZE) {
-        Individual newIndiv = bestIndividual;
-        mutateIndividual(newIndiv, rng, canvasW, canvasH, MUTATION_RATE * 10);
-        validatedPopulation.push_back(newIndiv);
-    }
-
+    // Fill rest with crossover + mutation
     while (static_cast<int>(newPop.size()) < POPULATION_SIZE) {
-        int i1 = tournamentSelect(fitnessValues, rng);
-        int i2 = tournamentSelect(fitnessValues, rng);
+        int p1 = tournamentSelect(fitnessValues, rng, TOURNAMENT_SIZE);
+        int p2 = tournamentSelect(fitnessValues, rng, TOURNAMENT_SIZE);
 
-        if (i1 < 0 || i2 < 0 || i1 >= validatedPopulation.size() || i2 >= validatedPopulation.size()) {
-            i1 = 0;
-            i2 = 0;
-        }
+        Individual c1, c2;
+        onePointCrossover(population[p1], population[p2], c1, c2, rng);
 
-        onePointCrossover(validatedPopulation[i1], validatedPopulation[i2], child1, child2, rng);
+        mutateIndividual(c1, rng, canvasW, canvasH, currentMutationRate);
+        mutateIndividual(c2, rng, canvasW, canvasH, currentMutationRate);
 
-        if (child1.size() != GENES_PER_INDIVIDUAL) {
-            child1 = validatedPopulation[0];
-            mutateIndividual(child1, rng, canvasW, canvasH, MUTATION_RATE * 2);
-        }
-
-        if (child2.size() != GENES_PER_INDIVIDUAL) {
-            child2 = validatedPopulation[0];
-            mutateIndividual(child2, rng, canvasW, canvasH, MUTATION_RATE * 2);
-        }
-
-        mutateIndividual(child1, rng, canvasW, canvasH, MUTATION_RATE);
-        mutateIndividual(child2, rng, canvasW, canvasH, MUTATION_RATE);
-
-        newPop.push_back(child1);
+        newPop.push_back(std::move(c1));
         if (static_cast<int>(newPop.size()) < POPULATION_SIZE) {
-            newPop.push_back(child2);
+            newPop.push_back(std::move(c2));
         }
     }
 
-    population.swap(newPop);
+    population = std::move(newPop);
 
-    bool populationValid = true;
-    for (const auto &individual: population) {
-        if (individual.size() != GENES_PER_INDIVIDUAL) {
-            populationValid = false;
-            std::cerr << "Invalid individual size after update: " << individual.size() << std::endl;
-            break;
-        }
-    }
-
-    if (!populationValid) {
-        std::cerr << "Warning: Invalid population detected. Regenerating..." << std::endl;
-        std::vector<Individual> regeneratedPop;
-        regeneratedPop.reserve(POPULATION_SIZE);
-        regeneratedPop.push_back(population[0]);
-
-        for (int i = 1; i < POPULATION_SIZE; i++) {
-            Individual newIndiv = population[0];
-            mutateIndividual(newIndiv, rng, canvasW, canvasH, MUTATION_RATE * 5);
-            regeneratedPop.push_back(newIndiv);
-        }
-
-        population.swap(regeneratedPop);
-    }
-
+    // 5. Upload and increment
     cudaRasterizer.uploadPopulation(population, downscaledTargetPixels);
 
     generationCount++;
@@ -402,7 +323,6 @@ void Application::update() {
 void Application::render() {
     std::vector<Pixel> bestImagePixels = cudaRasterizer.getRenderedImage(0);
 
-    sf::Image bestImage;
     unsigned renderW = cudaRasterizer.isInitialized()
                            ? cudaRasterizer.getWidth()
                            : rasterizer.getWidth();
@@ -410,13 +330,18 @@ void Application::render() {
                            ? cudaRasterizer.getHeight()
                            : rasterizer.getHeight();
 
-    bestImage.create(renderW, renderH, reinterpret_cast<const sf::Uint8 *>(bestImagePixels.data()));
-
+    // --- SFML 3 FIX: Update Texture Directly ---
     sf::Texture renderTextureDisplay;
-    if (!renderTextureDisplay.loadFromImage(bestImage)) {
-        std::cerr << "Failed to load rendered image into texture" << std::endl;
+
+    // 1. Resize texture to match data
+    if (!renderTextureDisplay.resize({renderW, renderH})) {
+        std::cerr << "Failed to resize display texture" << std::endl;
         return;
     }
+
+    renderTextureDisplay.update(reinterpret_cast<const std::uint8_t *>(bestImagePixels.data()));
+
+
     sf::Sprite spr(renderTextureDisplay);
 
     float scaleX = static_cast<float>(window.getSize().x) / renderW;
@@ -435,3 +360,4 @@ void Application::render() {
     window.draw(spr);
     window.display();
 }
+

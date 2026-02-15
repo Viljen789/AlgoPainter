@@ -14,8 +14,8 @@ float computeFitness(const sf::Image &rendered, const sf::Image &target) {
     float sum = 0;
     for (unsigned int y = 0; y < size.y; y++) {
         for (unsigned int x = 0; x < size.x; x++) {
-            auto c1 = rendered.getPixel(x, y);
-            auto c2 = target.getPixel(x, y);
+            auto c1 = rendered.getPixel({x, y});
+            auto c2 = target.getPixel({x, y});
             float dr = static_cast<float>(c1.r) - c2.r;
             float dg = static_cast<float>(c1.g) - c2.g;
             float db = static_cast<float>(c1.b) - c2.b;

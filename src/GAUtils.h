@@ -4,8 +4,6 @@
 #include <random>
 #include <SFML/Graphics.hpp>
 
-#include "Application.h"
-
 int tournamentSelect(const std::vector<float> &fitnessValues, std::mt19937 &rng, int tournamentSize = 5);
 
 std::pair<Individual, Individual> onePointCrossover(const Individual &A, const Individual &B, std::mt19937 &rng);

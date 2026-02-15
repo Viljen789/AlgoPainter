@@ -30,10 +30,14 @@ private:
     sf::Image targetImage;
     unsigned canvasW, canvasH;
 
-    static constexpr int POPULATION_SIZE = 200;
-    static constexpr int GENES_PER_INDIVIDUAL = 150;
-    static constexpr float MUTATION_RATE = 0.02f;
+    float currentMutationRate = 0.05f;
+    float bestFitness = -std::numeric_limits<float>::max();
+    float minPossibleFitness;
+
+    static constexpr int POPULATION_SIZE = 100;
+    static constexpr int GENES_PER_INDIVIDUAL = 200;
     static constexpr int TOURNAMENT_SIZE = 5;
+    static constexpr int ELITE_COUNT = 2;
 
     static constexpr int DISPLAY_FREQUENCY = 20;
     static constexpr bool SHOW_STATS = true;
@@ -58,7 +62,7 @@ private:
     std::vector<float> fitnessValues;
     Individual bestIndividual;
 
-    std::mt19937 rng;
+    std::mt19937 rng{std::random_device{}()};
 
     void downscaleTargetImage(int factor);
 

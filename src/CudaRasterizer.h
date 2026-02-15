@@ -83,6 +83,10 @@ private:
                                   unsigned int width,
                                   unsigned int height,
                                   Pixel clearColor);
+
+    void fitnessKernel_optimized(const Pixel *renderedBuffers, const Pixel *targetImage,
+                                 float *fitnessResults, unsigned int numIndividuals,
+                                 unsigned int imgWidth, unsigned int imgHeight);
 };
 
 #endif //CUDARASTERIZER_H
