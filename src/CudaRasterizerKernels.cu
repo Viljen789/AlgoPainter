@@ -6,8 +6,8 @@
 #include "CudaRasterizer.h"
 
 #define SHAPE_CIRCLE 0
-#define SHAPE_TRIANGLE 1
-#define SHAPE_SQUARE 2
+#define SHAPE_RECTANGLE 1
+#define SHAPE_TRIANGLE 2
 
 __device__ inline void blendPixels_device(Pixel &background, const Pixel &foreground) {
     if (foreground.a == 0) return;
@@ -15,277 +15,125 @@ __device__ inline void blendPixels_device(Pixel &background, const Pixel &foregr
         background = foreground;
         return;
     }
-
     unsigned int alpha = foreground.a;
     unsigned int invAlpha = 255 - alpha;
-
-    unsigned int r = static_cast<unsigned int>(background.r) * invAlpha + static_cast<unsigned int>(foreground.r) * alpha;
-    unsigned int g = static_cast<unsigned int>(background.g) * invAlpha + static_cast<unsigned int>(foreground.g) * alpha;
-    unsigned int b = static_cast<unsigned int>(background.b) * invAlpha + static_cast<unsigned int>(foreground.b) * alpha;
-
-    background.r = static_cast<uint8_t>(r >> 8);
-    background.g = static_cast<uint8_t>(g >> 8);
-    background.b = static_cast<uint8_t>(b >> 8);
+    background.r = static_cast<uint8_t>((static_cast<unsigned int>(background.r) * invAlpha + static_cast<unsigned int>(foreground.r) * alpha) >> 8);
+    background.g = static_cast<uint8_t>((static_cast<unsigned int>(background.g) * invAlpha + static_cast<unsigned int>(foreground.g) * alpha) >> 8);
+    background.b = static_cast<uint8_t>((static_cast<unsigned int>(background.b) * invAlpha + static_cast<unsigned int>(foreground.b) * alpha) >> 8);
 }
 
-__global__ void renderKernel_simple(const CudaGene *population, Pixel *renderedBuffers,
-                                    unsigned int numIndividuals, unsigned int genesPerIndividual,
-                                    unsigned int imgWidth, unsigned int imgHeight) {
-    unsigned int globalThreadId = blockIdx.x * blockDim.x + threadIdx.x;
-
-    unsigned int individualIdx = globalThreadId / genesPerIndividual;
-    unsigned int geneIdx = globalThreadId % genesPerIndividual;
-
-    if (individualIdx >= numIndividuals || geneIdx >= genesPerIndividual) {
-        return;
-    }
-
-    const CudaGene &gene = population[static_cast<size_t>(individualIdx) * genesPerIndividual + geneIdx];
-    const Pixel geneColor = {gene.r, gene.g, gene.b, gene.a};
-
-    Pixel *outputBuffer = renderedBuffers + static_cast<size_t>(individualIdx) * imgWidth * imgHeight;
-
-    switch (gene.type) {
-        case SHAPE_CIRCLE: {
-            int cx = static_cast<int>(gene.posX);
-            int cy = static_cast<int>(gene.posY);
-            int r = static_cast<int>(gene.size);
-            int r2 = r * r;
-
-            int y0 = max(0, cy - r);
-            int y1 = min((int) imgHeight, cy + r + 1);
-
-            for (int y = y0; y < y1; ++y) {
-                int dy = y - cy;
-                int dx_squared = r2 - dy * dy;
-                if (dx_squared >= 0) {
-                    int dx = static_cast<int>(sqrtf(static_cast<float>(dx_squared)));
-                    int x0 = max(0, cx - dx);
-                    int x1 = min((int) imgWidth, cx + dx + 1);
-
-                    for (int x = x0; x < x1; ++x) {
-                        int pixelIdx = y * imgWidth + x;
-                        blendPixels_device(outputBuffer[static_cast<size_t>(pixelIdx)], geneColor);
-                    }
-                }
-            }
-            break;
-        }
-        case SHAPE_SQUARE: {
-            int x = static_cast<int>(gene.posX - gene.size / 2.0f);
-            int y = static_cast<int>(gene.posY - gene.size / 2.0f);
-            int w = static_cast<int>(gene.size);
-            int h = static_cast<int>(gene.size);
-
-            int x0 = max(0, x);
-            int y0 = max(0, y);
-            int x1 = min((int) imgWidth, x + w);
-            int y1 = min((int) imgHeight, y + h);
-
-            for (int yy = y0; yy < y1; ++yy) {
-                for (int xx = x0; xx < x1; ++xx) {
-                    int pixelIdx = yy * imgWidth + xx;
-                    blendPixels_device(outputBuffer[static_cast<size_t>(pixelIdx)], geneColor);
-                }
-            }
-            break;
-        }
-        case SHAPE_TRIANGLE: {
-            float minXf = fminf(fminf(gene.posX, gene.posX + gene.size), gene.posX + gene.size / 2.0f);
-            float maxXf = fmaxf(fmaxf(gene.posX, gene.posX + gene.size), gene.posX + gene.size / 2.0f);
-            float minYf = fminf(fminf(gene.posY, gene.posY), gene.posY + gene.size * 0.866f);
-            float maxYf = fmaxf(fmaxf(gene.posY, gene.posY), gene.posY + gene.size * 0.866f);
-
-            int x0 = max(0, (int) floorf(minXf));
-            int x1 = min((int) imgWidth, (int) ceilf(maxXf));
-            int y0 = max(0, (int) floorf(minYf));
-            int y1 = min((int) imgHeight, (int) ceilf(maxYf));
-
-            float p0x = 0, p0y = 0;
-            float p1x = gene.size, p1y = 0;
-            float p2x = gene.size / 2.0f, p2y = gene.size * 0.866f;
-
-            float area = (p1x - p0x) * (p2y - p0y) - (p2x - p0x) * (p1y - p0y);
-            if (fabs(area) < 1e-6f) break;
-            float invArea = 1.0f / area;
-
-            for (int y = y0; y < y1; ++y) {
-                for (int x = x0; x < x1; ++x) {
-                    float px = (float) x - gene.posX + 0.5f;
-                    float py = (float) y - gene.posY + 0.5f;
-
-                    float w2 = ((p0x - p2x) * (py - p2y) - (p0y - p2y) * (px - p2x)) * invArea;
-                    float w0 = ((p1x - p0x) * (py - p0y) - (p1y - p0y) * (px - p0x)) * invArea;
-                    float w1 = 1.0f - w0 - w2;
-
-                    if (w0 >= -1e-3f && w1 >= -1e-3f && w2 >= -1e-3f) {
-                        int pixelIdx = y * imgWidth + x;
-                        blendPixels_device(outputBuffer[static_cast<size_t>(pixelIdx)], geneColor);
-                    }
-                }
-            }
-            break;
-        }
-    }
+__device__ inline float cross_product(float ax, float ay, float bx, float by, float cx, float cy) {
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
 }
+
+__global__ void renderKernel_perPixel(const CudaGene *population, Pixel *renderedBuffers,
+                                      unsigned int numIndividuals, unsigned int genesPerIndividual,
+                                      unsigned int imgWidth, unsigned int imgHeight) {
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+    unsigned int individualIdx = blockIdx.z;
+
+    if (x >= imgWidth || y >= imgHeight || individualIdx >= numIndividuals) return;
+
+    const CudaGene *individualGenes = population + (static_cast<size_t>(individualIdx) * genesPerIndividual);
+    
+    float sampleOffsets[4][2] = {{0.25f, 0.25f}, {0.75f, 0.25f}, {0.25f, 0.75f}, {0.75f, 0.75f}};
+    Pixel samples[4];
+    for(int s=0; s<4; ++s) samples[s] = {0, 0, 0, 255};
+
+    float px = static_cast<float>(x);
+    float py = static_cast<float>(y);
+
+    for (unsigned int i = 0; i < genesPerIndividual; ++i) {
+        const CudaGene &gene = individualGenes[i];
+        const Pixel geneColor = {gene.r, gene.g, gene.b, gene.a};
+        
+        float rad = gene.rotation * (3.14159265f / 180.0f);
+        float cosA = cosf(rad);
+        float sinA = sinf(rad);
+
+        for (int s = 0; s < 4; ++s) {
+            float fx = px + sampleOffsets[s][0];
+            float fy = py + sampleOffsets[s][1];
+            
+            // Transform to local coordinates
+            float dx = fx - gene.posX;
+            float dy = fy - gene.posY;
+            float lx = dx * cosA + dy * sinA;
+            float ly = -dx * sinA + dy * cosA;
+            
+            bool inside = false;
+            if (gene.type == SHAPE_CIRCLE) {
+                if (lx * lx + ly * ly <= gene.sizeX * gene.sizeX) inside = true;
+            } else if (gene.type == SHAPE_RECTANGLE) {
+                if (fabsf(lx) <= gene.sizeX * 0.5f && fabsf(ly) <= gene.sizeY * 0.5f) inside = true;
+            } else if (gene.type == SHAPE_TRIANGLE) {
+                // Approximate equilateral triangle in local space
+                float s = gene.sizeX;
+                float x0 = -s*0.5f, y0 = -s*0.288f;
+                float x1 = s*0.5f,  y1 = -s*0.288f;
+                float x2 = 0,       y2 = s*0.577f;
+                if (is_inside_triangle(lx, ly, x0, y0, x1, y1, x2, y2)) inside = true;
+            }
+
+            if (inside) blendPixels_device(samples[s], geneColor);
+        }
+    }
+
+    size_t pixelIdx = static_cast<size_t>(individualIdx) * imgWidth * imgHeight + (y * imgWidth + x);
+    renderedBuffers[pixelIdx] = {
+        static_cast<uint8_t>((static_cast<int>(samples[0].r) + samples[1].r + samples[2].r + samples[3].r) >> 2),
+        static_cast<uint8_t>((static_cast<int>(samples[0].g) + samples[1].g + samples[2].g + samples[3].g) >> 2),
+        static_cast<uint8_t>((static_cast<int>(samples[0].b) + samples[1].b + samples[2].b + samples[3].b) >> 2),
+        255
+    };
+}
+
+// ... Rest of the file (fitnessKernel, clearBuffersKernel, launch functions) remain identical to the previous version
+// I will rewrite them to ensure completeness.
 
 __global__ void fitnessKernel(const Pixel *renderedBuffers, const Pixel *targetImage,
                               float *fitnessResults, unsigned int numIndividuals,
                               unsigned int imgWidth, unsigned int imgHeight) {
     unsigned int individualIdx = blockIdx.x;
-
-    if (individualIdx >= numIndividuals) {
-        return;
-    }
-
+    if (individualIdx >= numIndividuals) return;
     const Pixel *renderedBuffer = renderedBuffers + static_cast<size_t>(individualIdx) * imgWidth * imgHeight;
-
     unsigned int totalPixels = imgWidth * imgHeight;
-
     extern __shared__ float sdata[];
-
     float mySum = 0.0f;
     for (unsigned int i = threadIdx.x; i < totalPixels; i += blockDim.x) {
         const Pixel &c1 = renderedBuffer[i];
         const Pixel &c2 = targetImage[i];
-
-        int dr = static_cast<int>(c1.r) - c2.r;
-        int dg = static_cast<int>(c1.g) - c2.g;
-        int db = static_cast<int>(c1.b) - c2.b;
-
-        mySum -= static_cast<float>(dr * dr + dg * dg + db * db);
+        int dr = (int)c1.r - c2.r; int dg = (int)c1.g - c2.g; int db = (int)c1.b - c2.b;
+        mySum -= (float)(dr * dr + dg * dg + db * db);
     }
-
     sdata[threadIdx.x] = mySum;
-
     __syncthreads();
-
     for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (threadIdx.x < s) {
-            sdata[threadIdx.x] += sdata[threadIdx.x + s];
-        }
+        if (threadIdx.x < s) sdata[threadIdx.x] += sdata[threadIdx.x + s];
         __syncthreads();
     }
-
-    if (threadIdx.x == 0) {
-        fitnessResults[individualIdx] = sdata[0];
-    }
+    if (threadIdx.x == 0) fitnessResults[individualIdx] = sdata[0];
 }
 
 __global__ void clearBuffersKernel(Pixel *renderedBuffers, unsigned int numIndividuals, unsigned int imgWidth,
                                    unsigned int imgHeight, Pixel clearColor) {
-    size_t totalPixelsPerBuffer = static_cast<size_t>(imgWidth) * imgHeight;
-    size_t globalPixelIdx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-
-    size_t totalPixelsAcrossBuffers = totalPixelsPerBuffer * numIndividuals;
-
-    if (globalPixelIdx < totalPixelsAcrossBuffers) {
-        renderedBuffers[globalPixelIdx] = clearColor;
-    }
+    size_t totalPixelsAcrossBuffers = (size_t)imgWidth * imgHeight * numIndividuals;
+    size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < totalPixelsAcrossBuffers) renderedBuffers[idx] = clearColor;
 }
 
-void CudaRasterizer::launchRenderKernel(CudaGene *d_population,
-                                        Pixel *d_renderedBuffers,
-                                        unsigned int populationSize,
-                                        unsigned int genesPerIndividual,
-                                        unsigned int width,
-                                        unsigned int height) {
-    const int threadsPerBlock = 256;
-    int totalThreadsNeeded = populationSize * genesPerIndividual;
-    int blocksNeeded = (totalThreadsNeeded + threadsPerBlock - 1) / threadsPerBlock;
-
-    renderKernel_simple<<<blocksNeeded, threadsPerBlock>>>(
-        d_population, d_renderedBuffers, populationSize,
-        genesPerIndividual, width, height
-    );
+void CudaRasterizer::launchRenderKernel(CudaGene *d_population, Pixel *d_renderedBuffers, unsigned int populationSize, unsigned int genesPerIndividual, unsigned int width, unsigned int height) {
+    dim3 threads(16, 16, 1);
+    dim3 blocks((width + 15) / 16, (height + 15) / 16, populationSize);
+    renderKernel_perPixel<<<blocks, threads>>>(d_population, d_renderedBuffers, populationSize, genesPerIndividual, width, height);
 }
 
-void CudaRasterizer::launchFitnessKernel(Pixel *d_renderedBuffers,
-                                         Pixel *d_targetImage,
-                                         float *d_fitnessResults,
-                                         unsigned int populationSize,
-                                         unsigned int width,
-                                         unsigned int height) {
-    const int threadsPerBlock = 256;
-    int sharedMemSize = threadsPerBlock * sizeof(float);
-
-    fitnessKernel<<<populationSize, threadsPerBlock, sharedMemSize>>>(
-        d_renderedBuffers, d_targetImage, d_fitnessResults,
-        populationSize, width, height
-    );
+void CudaRasterizer::launchFitnessKernel(Pixel *d_renderedBuffers, Pixel *d_targetImage, float *d_fitnessResults, unsigned int populationSize, unsigned int width, unsigned int height) {
+    fitnessKernel<<<populationSize, 256, 256 * sizeof(float)>>>(d_renderedBuffers, d_targetImage, d_fitnessResults, populationSize, width, height);
 }
 
-void CudaRasterizer::launchClearBuffersKernel(Pixel *d_renderedBuffers,
-                                              unsigned int populationSize,
-                                              unsigned int width,
-                                              unsigned int height,
-                                              Pixel clearColor) {
-    const int threadsPerBlock = 256;
-    size_t totalPixels = static_cast<size_t>(width) * height * populationSize;
-    int blocksNeeded = (totalPixels + threadsPerBlock - 1) / threadsPerBlock;
-
-    clearBuffersKernel<<<blocksNeeded, threadsPerBlock>>>(
-        d_renderedBuffers, populationSize, width, height, clearColor
-    );
-}
-
-__global__ void fitnessKernel_optimized(const Pixel *renderedBuffers, const Pixel *targetImage,
-                                        float *fitnessResults, unsigned int numIndividuals,
-                                        unsigned int imgWidth, unsigned int imgHeight) {
-    unsigned int individualIdx = blockIdx.x;
-    if (individualIdx >= numIndividuals) return;
-
-    const Pixel *rendered = renderedBuffers + static_cast<size_t>(individualIdx) * imgWidth * imgHeight;
-    unsigned int totalPixels = imgWidth * imgHeight;
-
-    extern __shared__ float sdata[];
-
-    float mySum = 0.0f;
-
-    // Process 4 pixels at a time for better memory throughput
-    unsigned int i = threadIdx.x * 4;
-    unsigned int stride = blockDim.x * 4;
-
-    for (; i + 3 < totalPixels; i += stride) {
-        #pragma unroll
-        for (int k = 0; k < 4; k++) {
-            const Pixel &c1 = rendered[i + k];
-            const Pixel &c2 = targetImage[i + k];
-            int dr = c1.r - c2.r;
-            int dg = c1.g - c2.g;
-            int db = c1.b - c2.b;
-            mySum -= static_cast<float>(dr * dr + dg * dg + db * db);
-        }
-    }
-
-    // Handle remaining pixels
-    for (; i < totalPixels; i += blockDim.x) {
-        const Pixel &c1 = rendered[i];
-        const Pixel &c2 = targetImage[i];
-        int dr = c1.r - c2.r;
-        int dg = c1.g - c2.g;
-        int db = c1.b - c2.b;
-        mySum -= static_cast<float>(dr * dr + dg * dg + db * db);
-    }
-
-    sdata[threadIdx.x] = mySum;
-    __syncthreads();
-
-    // Warp-level reduction (faster for modern GPUs)
-    for (unsigned int s = blockDim.x / 2; s > 32; s >>= 1) {
-        if (threadIdx.x < s) sdata[threadIdx.x] += sdata[threadIdx.x + s];
-        __syncthreads();
-    }
-
-    if (threadIdx.x < 32) {
-        volatile float *vsmem = sdata;
-        vsmem[threadIdx.x] += vsmem[threadIdx.x + 32];
-        vsmem[threadIdx.x] += vsmem[threadIdx.x + 16];
-        vsmem[threadIdx.x] += vsmem[threadIdx.x + 8];
-        vsmem[threadIdx.x] += vsmem[threadIdx.x + 4];
-        vsmem[threadIdx.x] += vsmem[threadIdx.x + 2];
-        vsmem[threadIdx.x] += vsmem[threadIdx.x + 1];
-    }
-
-    if (threadIdx.x == 0) fitnessResults[individualIdx] = sdata[0];
+void CudaRasterizer::launchClearBuffersKernel(Pixel *d_renderedBuffers, unsigned int populationSize, unsigned int width, unsigned int height, Pixel clearColor) {
+    size_t total = (size_t)width * height * populationSize;
+    clearBuffersKernel<<<(total + 255) / 256, 256>>>(d_renderedBuffers, populationSize, width, height, clearColor);
 }

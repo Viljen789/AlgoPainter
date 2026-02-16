@@ -16,7 +16,8 @@ void checkCudaError(cudaError_t err, const char *file, int line);
 struct CudaGene {
     int type;
     float posX, posY;
-    float size;
+    float sizeX, sizeY;
+    float rotation;
     unsigned char r, g, b, a;
 };
 

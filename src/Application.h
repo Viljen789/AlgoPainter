@@ -14,38 +14,30 @@
 class Application {
 public:
     Application();
-
     void run();
 
 private:
     void processEvents();
-
     void update();
-
     void render();
-
     void saveCurrentImage();
 
     sf::RenderWindow window;
     sf::Image targetImage;
     unsigned canvasW, canvasH;
 
-    float currentMutationRate = 0.05f;
-    float bestFitness = -std::numeric_limits<float>::max();
-    float minPossibleFitness;
-
     static constexpr int POPULATION_SIZE = 100;
-    static constexpr int GENES_PER_INDIVIDUAL = 200;
-    static constexpr int TOURNAMENT_SIZE = 5;
-    static constexpr int ELITE_COUNT = 2;
+    static constexpr int GENES_PER_INDIVIDUAL = 250;
+    static constexpr float MUTATION_RATE = 0.05f;
+    static constexpr int TOURNAMENT_SIZE = 4;
 
-    static constexpr int DISPLAY_FREQUENCY = 20;
+    static constexpr int DISPLAY_FREQUENCY = 10;
     static constexpr bool SHOW_STATS = true;
     static constexpr bool USE_GPU = true;
 
     static constexpr bool USE_PROGRESSIVE_RENDERING = true;
-    static constexpr int INITIAL_RESOLUTION_FACTOR = 8;
-    static constexpr int PROGRESSIVE_RESOLUTION_FREQUENCY = 50;
+    static constexpr int INITIAL_RESOLUTION_FACTOR = 16;
+    static constexpr int PROGRESSIVE_RESOLUTION_FREQUENCY = 100;
     int currentResolutionFactor = INITIAL_RESOLUTION_FACTOR;
 
     int generationCount = 0;
@@ -62,10 +54,9 @@ private:
     std::vector<float> fitnessValues;
     Individual bestIndividual;
 
-    std::mt19937 rng{std::random_device{}()};
+    std::mt19937 rng;
 
     void downscaleTargetImage(int factor);
-
     void increaseResolution();
 };
 
