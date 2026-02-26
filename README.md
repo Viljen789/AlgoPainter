@@ -49,11 +49,11 @@ Unlike standard rasterizers that draw shapes one by one (prone to race condition
 
 ##  Example Output
 
-|          Target Image          | Generated Artwork |
-|:------------------------------:|:-----------------:|
-| ![Target](assets/cool-dog.jpg) |       ...         |
+|          Target Image          | Generated Artwork | VIDEO | 
+|:------------------------------:|:-----------------:|:-----------------:|
+| ![Target](assets/raindeer-mic.jpg)  |      ![Result Pic](results/reindeer-evo-art.png)          | ![Result Video](results/reindeer-evo-art-video.mp4) | 
 
-> *Example: Generated with 250 genes over 50,000 generations.*
+> *Generated after ~5500 generations with a population size of 250, 200 genes, 0.05 mutation rate and tournament size of 4*
 
 ## Controls
 
