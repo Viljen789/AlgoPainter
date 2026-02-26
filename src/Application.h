@@ -2,21 +2,27 @@
 #define APPLICATION_H
 
 #pragma once
-#include <random>
+#include "Gene.h"
+#include "IRasterizer.h"
+#include "Individual.h"
+#include "Pixel.h"
+#include "Rasterizer.h"
+
 #include <SFML/Graphics.hpp>
 
-#include "Gene.h"
-#include "Individual.h"
-#include "Rasterizer.h"
+#include <memory>
+#include <random>
+
+#ifdef USE_CUDA
 #include "CudaRasterizer.h"
-#include "Pixel.h"
+#endif
 
 class Application {
-public:
+  public:
     Application();
     void run();
 
-private:
+  private:
     void processEvents();
     void update();
     void render();
@@ -25,6 +31,8 @@ private:
     sf::RenderWindow window;
     sf::Image targetImage;
     unsigned canvasW, canvasH;
+
+    std::string targetPath = "assets/cool-dog.jpg";
 
     static constexpr int POPULATION_SIZE = 100;
     static constexpr int GENES_PER_INDIVIDUAL = 250;
@@ -44,8 +52,7 @@ private:
     int lastDisplayedGeneration = 0;
     sf::Clock performanceClock;
 
-    Rasterizer rasterizer;
-    CudaRasterizer cudaRasterizer;
+    std::unique_ptr<IRasterizer> rasterizer;
 
     std::vector<Pixel> targetPixels;
     std::vector<Pixel> downscaledTargetPixels;
@@ -60,4 +67,4 @@ private:
     void increaseResolution();
 };
 
-#endif //APPLICATION_H
+#endif // APPLICATION_H

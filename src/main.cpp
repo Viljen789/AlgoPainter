@@ -1,12 +1,12 @@
 #include "Application.h"
+
 #include <iostream>
 
 int main() {
     try {
         Application app;
         app.run();
-    }
-    catch (const std::exception& e) {
+    } catch (const std::exception& e) {
         std::cerr << "Fatal Error: " << e.what() << std::endl;
         return -1;
     }

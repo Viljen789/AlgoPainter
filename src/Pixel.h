@@ -3,10 +3,10 @@
 #pragma once
 #include <cstdint>
 
-#pragma pack(push,1)
+#pragma pack(push, 1)
 struct Pixel {
     uint8_t r, g, b, a;
 };
 #pragma pack(pop)
 
-#endif //PIXEL_H
+#endif // PIXEL_H

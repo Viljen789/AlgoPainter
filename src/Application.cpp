@@ -1,28 +1,40 @@
-#include <iostream>
-#include <cstdint>
-#include <iosfwd>
-#include <random>
-#include <filesystem>
-#include <ctime>
-#include <iomanip>
-#include <sstream>
-
 #include "Application.h"
+
 #include "Fitness.h"
 #include "GAUtils.h"
 #include "Gene.h"
 #include "Pixel.h"
 
-#ifndef NO_OPENMP
+#include <cstdint>
+#include <ctime>
+#include <filesystem>
+#include <iomanip>
+#include <iosfwd>
+#include <iostream>
+#include <memory>
+#include <random>
+#include <sstream>
+
+#ifdef USE_OPENMP
 #include <omp.h>
 #endif
 
-Application::Application()
-    : window(sf::VideoMode({800, 600}), "EvoArt"),
-      rasterizer(1, 1),
-      cudaRasterizer(1, 1) {
-    
-    std::string targetPath = "../assets/target.jpg";
+Application::Application() : window(sf::VideoMode({800, 600}), "EvoArt") {
+
+    // Hardware Routing: choose CUDA or CPU rasterizer
+#ifdef USE_CUDA
+    if (USE_GPU) {
+        rasterizer = std::make_unique<CudaRasterizer>(1, 1);
+        std::cout << "Hardware: CUDA Rasterizer initialized." << std::endl;
+    } else {
+        rasterizer = std::make_unique<Rasterizer>(1, 1);
+        std::cout << "Hardware: CPU Rasterizer initialized (CUDA bypassed)." << std::endl;
+    }
+#else
+    rasterizer = std::make_unique<Rasterizer>(1, 1);
+    std::cout << "Hardware: CPU Rasterizer initialized (macOS/non-CUDA fallback)." << std::endl;
+#endif
+
     if (!targetImage.loadFromFile(targetPath)) {
         std::cerr << "ERROR: Failed to load target image from: " << std::filesystem::absolute(targetPath) << std::endl;
         throw std::runtime_error("Failed to load target image");
@@ -35,7 +47,7 @@ Application::Application()
     targetPixels.resize(static_cast<size_t>(canvasW) * canvasH);
     for (unsigned y = 0; y < canvasH; y++) {
         for (unsigned x = 0; x < canvasW; x++) {
-            sf::Color c = targetImage.getPixel(x, y);
+            sf::Color c = targetImage.getPixel({x, y});
             targetPixels[static_cast<size_t>(y) * canvasW + x] = {c.r, c.g, c.b, 255};
         }
     }
@@ -45,14 +57,11 @@ Application::Application()
     } else {
         currentResolutionFactor = 1;
         downscaledTargetPixels = targetPixels;
-        rasterizer.resize(canvasW, canvasH);
-        cudaRasterizer.resize(canvasW, canvasH, downscaledTargetPixels);
+        rasterizer->resize(canvasW, canvasH, downscaledTargetPixels);
     }
 
     std::uniform_real_distribution<float> xDist(0.0f, static_cast<float>(canvasW)),
-            yDist(0.0f, static_cast<float>(canvasH)), 
-            sizeDist(5.0f, 40.0f),
-            rotDist(0.0f, 360.0f);
+        yDist(0.0f, static_cast<float>(canvasH)), sizeDist(5.0f, 40.0f), rotDist(0.0f, 360.0f);
     std::uniform_int_distribution<int> colorDist(0, 255);
 
     population.reserve(POPULATION_SIZE);
@@ -65,24 +74,22 @@ Application::Application()
             sf::Vector2f pos{xDist(rng), yDist(rng)};
             sf::Vector2f size{sizeDist(rng), sizeDist(rng)};
             float rot = rotDist(rng);
-            sf::Color color{
-                static_cast<std::uint8_t>(colorDist(rng)), 
-                static_cast<std::uint8_t>(colorDist(rng)),
-                static_cast<std::uint8_t>(colorDist(rng)),
-                static_cast<std::uint8_t>(std::uniform_int_distribution<int>(30, 150)(rng))
-            };
+            sf::Color color{static_cast<std::uint8_t>(colorDist(rng)), static_cast<std::uint8_t>(colorDist(rng)),
+                            static_cast<std::uint8_t>(colorDist(rng)),
+                            static_cast<std::uint8_t>(std::uniform_int_distribution<int>(30, 150)(rng))};
             indiv.emplace_back(shape, pos, size, rot, color);
         }
         population.push_back(std::move(indiv));
     }
     bestIndividual = population[0];
-    cudaRasterizer.uploadPopulation(population, downscaledTargetPixels);
+    rasterizer->uploadPopulation(population, downscaledTargetPixels);
 }
 
 void Application::downscaleTargetImage(int factor) {
     unsigned downscaledW = canvasW / factor;
     unsigned downscaledH = canvasH / factor;
-    if (downscaledW == 0 || downscaledH == 0) return;
+    if (downscaledW == 0 || downscaledH == 0)
+        return;
 
     downscaledTargetPixels.resize(static_cast<size_t>(downscaledW) * downscaledH);
     for (unsigned y = 0; y < downscaledH; y++) {
@@ -93,22 +100,23 @@ void Application::downscaleTargetImage(int factor) {
                     unsigned srcX = x * factor + dx;
                     unsigned srcY = y * factor + dy;
                     if (srcX < canvasW && srcY < canvasH) {
-                        const Pixel &p = targetPixels[static_cast<size_t>(srcY) * canvasW + srcX];
-                        r += p.r; g += p.g; b += p.b; count++;
+                        const Pixel& p = targetPixels[static_cast<size_t>(srcY) * canvasW + srcX];
+                        r += p.r;
+                        g += p.g;
+                        b += p.b;
+                        count++;
                     }
                 }
             }
             if (count > 0) {
                 downscaledTargetPixels[static_cast<size_t>(y) * downscaledW + x] = {
-                    static_cast<uint8_t>(r / count), static_cast<uint8_t>(g / count),
-                    static_cast<uint8_t>(b / count), 255
-                };
+                    static_cast<uint8_t>(r / count), static_cast<uint8_t>(g / count), static_cast<uint8_t>(b / count),
+                    255};
             }
         }
     }
-    rasterizer.resize(downscaledW, downscaledH);
-    cudaRasterizer.resize(downscaledW, downscaledH, downscaledTargetPixels);
-    cudaRasterizer.uploadPopulation(population, downscaledTargetPixels);
+    rasterizer->resize(downscaledW, downscaledH, downscaledTargetPixels);
+    rasterizer->uploadPopulation(population, downscaledTargetPixels);
 }
 
 void Application::increaseResolution() {
@@ -129,12 +137,11 @@ void Application::run() {
             render();
             float elapsed = performanceClock.getElapsedTime().asSeconds();
             performanceClock.restart();
-            std::cout << "Gen " << generationCount << " | Best Fitness: " << fitnessValues[0] 
-                      << " | Res: 1/" << currentResolutionFactor 
-                      << " | FPS: " << DISPLAY_FREQUENCY / elapsed << std::endl;
+            std::cout << "Gen " << generationCount << " | Best Fitness: " << fitnessValues[0] << " | Res: 1/"
+                      << currentResolutionFactor << " | FPS: " << DISPLAY_FREQUENCY / elapsed << std::endl;
         }
 
-        if (USE_PROGRESSIVE_RENDERING && generationCount > 0 && 
+        if (USE_PROGRESSIVE_RENDERING && generationCount > 0 &&
             generationCount % PROGRESSIVE_RESOLUTION_FREQUENCY == 0 && currentResolutionFactor > 1) {
             increaseResolution();
         }
@@ -142,15 +149,19 @@ void Application::run() {
 }
 
 void Application::processEvents() {
-    sf::Event event;
-    while (window.pollEvent(event)) {
-        if (event.type == sf::Event::Closed) window.close();
-        else if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::S) saveCurrentImage();
+    while (auto event = window.pollEvent()) {
+        if (event->is<sf::Event::Closed>()) {
+            window.close();
+        } else if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+            if (keyPressed->code == sf::Keyboard::Key::S) {
+                saveCurrentImage();
+            }
+        }
     }
 }
 
 void Application::update() {
-    cudaRasterizer.renderAndEvaluate(downscaledTargetPixels, fitnessValues);
+    rasterizer->renderAndEvaluate(downscaledTargetPixels, fitnessValues);
 
     std::vector<int> indices(POPULATION_SIZE);
     std::iota(indices.begin(), indices.end(), 0);
@@ -173,19 +184,21 @@ void Application::update() {
         }
     }
     population = std::move(nextPop);
-    cudaRasterizer.uploadPopulation(population, downscaledTargetPixels);
+    rasterizer->uploadPopulation(population, downscaledTargetPixels);
     generationCount++;
 }
 
 void Application::render() {
-    std::vector<Pixel> pixels = cudaRasterizer.getRenderedImage(0);
-    sf::Image img;
-    img.create(cudaRasterizer.getWidth(), cudaRasterizer.getHeight(), reinterpret_cast<const sf::Uint8*>(pixels.data()));
-    sf::Texture tex; tex.loadFromImage(img);
+    std::vector<Pixel> pixels = rasterizer->getRenderedImage(0);
+    sf::Image img(sf::Vector2u{rasterizer->getWidth(), rasterizer->getHeight()},
+                  reinterpret_cast<const std::uint8_t*>(pixels.data()));
+    sf::Texture tex(img);
     sf::Sprite spr(tex);
-    float s = std::min(800.0f / img.getSize().x, 600.0f / img.getSize().y);
+    float s = std::min(800.0f / static_cast<float>(img.getSize().x), 600.0f / static_cast<float>(img.getSize().y));
     spr.setScale({s, s});
-    window.clear(); window.draw(spr); window.display();
+    window.clear();
+    window.draw(spr);
+    window.display();
 }
 
 void Application::saveCurrentImage() { /* Implementation similar to previous but concise */ }

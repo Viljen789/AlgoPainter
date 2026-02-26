@@ -1,67 +1,104 @@
 cmake_minimum_required(VERSION 3.18)
-project(AlgoPainter LANGUAGES CXX CUDA)
+project(AlgoPainter LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD 17)
 
-# Point to your SFML 3 folder
-set(SFML_DIR "C:/Libs/SFML-3.0.2/lib/cmake/SFML")
+find_package(SFML 3 COMPONENTS Graphics Window System REQUIRED)
+find_package(CUDAToolkit QUIET)
+find_package(OpenMP QUIET)
 
-find_package(SFML 3.0 COMPONENTS Graphics Window System REQUIRED)
-find_package(CUDAToolkit REQUIRED)
-
-set(SOURCES
-    src/main.cpp
-    src/Application.cpp
-    src/CudaRasterizer.cpp
-    src/Fitness.cpp
-    src/GAUtils.cpp
-    src/Gene.cpp
-    src/Rasterizer.cpp
+set(CORE_SOURCES
+		src/main.cpp
+		src/Application.cpp
+		src/Rasterizer.cpp
+		src/GAUtils.cpp
+		src/Gene.cpp
+		src/Fitness.cpp
+		src/FontAnalyzer.cpp
+		src/IRasterizer.cpp
 )
 
 set(HEADERS
-    src/Application.h
-    src/CudaRasterizer.h
-    src/Fitness.h
-    src/GAUtils.h
-    src/Gene.h
-    src/Individual.h
-    src/Pixel.h
-    src/Rasterizer.h
+		src/Application.h
+		src/Pixel.h
+		src/Rasterizer.h
+		src/Individual.h
+		src/Gene.h
+		src/GAUtils.h
+		src/FontAnalyzer.h
+		src/Fitness.h
+		src/CudaRasterizer.h
+		src/IRasterizer.h
 )
 
-set(CUDA_SOURCES
-    src/CudaRasterizerKernels.cu
-)
+if (CUDAToolkit_FOUND)
+	enable_language(CUDA)
+	set(CMAKE_CUDA_STANDARD 17)
 
-add_executable(${PROJECT_NAME}
-    ${SOURCES}
-    ${HEADERS}
-    ${CUDA_SOURCES}
-)
+	list(APPEND CORE_SOURCES
+			src/CudaRasterizer.cpp
+			src/CudaRasterizerKernels.cu
+	)
+endif ()
+
+add_executable(${PROJECT_NAME} ${CORE_SOURCES} ${HEADERS})
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
-target_link_libraries(${PROJECT_NAME}
-    SFML::Graphics
-    SFML::Window
-    SFML::System
-    CUDA::cudart
+target_link_libraries(${PROJECT_NAME} PRIVATE
+		SFML::Graphics
+		SFML::Window
+		SFML::System
 )
 
-# --- NEW SECTION: Copy SFML DLLs to the executable folder automatically ---
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    $<TARGET_FILE:SFML::Graphics>
-    $<TARGET_FILE:SFML::Window>
-    $<TARGET_FILE:SFML::System>
-    $<TARGET_FILE_DIR:${PROJECT_NAME}>
-    COMMENT "Copying SFML DLLs to output directory..."
-)
+if (CUDAToolkit_FOUND)
+	target_link_libraries(${PROJECT_NAME} PRIVATE CUDA::cudart)
+	set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
-set_target_properties(${PROJECT_NAME} PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES "89"
-)
+	target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CUDA)
+endif ()
+
+if (OpenMP_CXX_FOUND)
+	target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+	target_compile_definitions(${PROJECT_NAME} PRIVATE USE_OPENMP)
+endif ()
+
+if (WIN32)
+	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			$<TARGET_FILE:SFML::Graphics>
+			$<TARGET_FILE:SFML::Window>
+			$<TARGET_FILE:SFML::System>
+			$<TARGET_FILE_DIR:${PROJECT_NAME}>
+			COMMENT "Copying SFML DLLs to output directory..."
+	)
+endif ()
+
+# ============================================
+# Code Formatting Target (clang-format)
+# ============================================
+find_program(CLANG_FORMAT_EXE NAMES clang-format)
+
+if (CLANG_FORMAT_EXE)
+	file(GLOB_RECURSE ALL_SOURCE_FILES
+			${CMAKE_SOURCE_DIR}/src/*.cpp
+			${CMAKE_SOURCE_DIR}/src/*.h
+			${CMAKE_SOURCE_DIR}/src/*.cu
+	)
+
+	add_custom_target(format
+			COMMAND ${CLANG_FORMAT_EXE} -i ${ALL_SOURCE_FILES}
+			COMMENT "Running clang-format on all source files..."
+			VERBATIM
+	)
+
+	add_custom_target(format-check
+			COMMAND ${CLANG_FORMAT_EXE} --dry-run --Werror ${ALL_SOURCE_FILES}
+			COMMENT "Checking code formatting..."
+			VERBATIM
+	)
+else ()
+	message(STATUS "clang-format not found - format targets will not be available")
+endif ()
+

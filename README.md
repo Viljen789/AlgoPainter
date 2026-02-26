@@ -49,9 +49,9 @@ Unlike standard rasterizers that draw shapes one by one (prone to race condition
 
 ##  Example Output
 
-|          Target Image          | Generated Artwork | VIDEO | 
-|:------------------------------:|:-----------------:|:-----------------:|
-| ![Target](assets/raindeer-mic.jpg)  |      ![Result Pic](results/reindeer-evo-art.png)          | ![Result Video](results/reindeer-evo-art-video.mp4) | 
+|          Target Image          |                         Generated Artwork                         |                               VIDEO                               | 
+|:------------------------------:|:-----------------------------------------------------------------:|:-----------------------------------------------------------------:|
+| <img src="assets/raindeer-mic.jpg" width="300"> | <img src="results/reindeer-evo-art.png" height="110" width="200"> | <img src="results/reindeer-evo-art.gif" width="300"> |
 
 > *Generated after ~5500 generations with a population size of 250, 200 genes, 0.05 mutation rate and tournament size of 4*
 

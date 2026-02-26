@@ -1,46 +1,93 @@
 #include "Rasterizer.h"
+
 #include <algorithm>
 #include <cmath>
-#include <memory>
 #include <iostream>
+#include <memory>
 
 #define min_x_bound min_x_bound_rasterizer
 #define max_x_bound max_x_bound_rasterizer
 #define min_y_bound min_y_bound_rasterizer
 #define max_y_bound max_y_bound_rasterizer
 
-Rasterizer::Rasterizer(unsigned w, unsigned h)
-    : width_(w), height_(h), buffer_(static_cast<size_t>(w) * h) {
-}
+Rasterizer::Rasterizer(unsigned w, unsigned h) : width_(w), height_(h), buffer_(static_cast<size_t>(w) * h) {}
 
-void Rasterizer::resize(unsigned w, unsigned h) {
+void Rasterizer::resize(unsigned w, unsigned h, const std::vector<Pixel>& targetImage) {
     width_ = w;
     height_ = h;
     buffer_.resize(static_cast<size_t>(w) * h);
+    targetImage_ = targetImage;
 }
 
-void Rasterizer::clear(const Pixel &c) {
-    std::fill(buffer_.begin(), buffer_.end(), c);
+void Rasterizer::uploadPopulation(const std::vector<Individual>& population, const std::vector<Pixel>& targetImage) {
+    population_ = population;
+    targetImage_ = targetImage;
 }
 
-const std::vector<Pixel> &Rasterizer::data() const {
+void Rasterizer::renderAndEvaluate(const std::vector<Pixel>& targetImage, std::vector<float>& fitnessResults) {
+    fitnessResults.resize(population_.size());
+
+    for (size_t i = 0; i < population_.size(); ++i) {
+        // Clear and render individual
+        clear({255, 255, 255, 255});
+        for (const Gene& gene : population_[i]) {
+            draw(gene);
+        }
+        // Compute fitness
+        fitnessResults[i] = computeFitness(buffer_, targetImage);
+    }
+}
+
+std::vector<Pixel> Rasterizer::getRenderedImage(int index) {
+    if (index < 0 || static_cast<size_t>(index) >= population_.size()) {
+        return buffer_; // Return current buffer if index invalid
+    }
+
+    clear({255, 255, 255, 255});
+    for (const Gene& gene : population_[index]) {
+        draw(gene);
+    }
     return buffer_;
 }
 
-inline void Rasterizer::blendPixel(int x, int y, const Pixel &col) {
+float Rasterizer::computeFitness(const std::vector<Pixel>& rendered, const std::vector<Pixel>& target) const {
+    if (rendered.size() != target.size())
+        return -1e12f;
+
+    double totalError = 0.0;
+    for (size_t i = 0; i < rendered.size(); ++i) {
+        int dr = static_cast<int>(rendered[i].r) - static_cast<int>(target[i].r);
+        int dg = static_cast<int>(rendered[i].g) - static_cast<int>(target[i].g);
+        int db = static_cast<int>(rendered[i].b) - static_cast<int>(target[i].b);
+        totalError += dr * dr + dg * dg + db * db;
+    }
+    // Return negative error (higher is better fitness)
+    return static_cast<float>(-totalError);
+}
+
+void Rasterizer::clear(const Pixel& c) {
+    std::fill(buffer_.begin(), buffer_.end(), c);
+}
+
+const std::vector<Pixel>& Rasterizer::data() const {
+    return buffer_;
+}
+
+inline void Rasterizer::blendPixel(int x, int y, const Pixel& col) {
     if (x >= 0 && static_cast<unsigned>(x) < width_ && y >= 0 && static_cast<unsigned>(y) < height_) {
-        Pixel &p = buffer_[static_cast<size_t>(y) * width_ + x];
+        Pixel& p = buffer_[static_cast<size_t>(y) * width_ + x];
         uint16_t alpha = col.a;
-        if (alpha == 0) return;
+        if (alpha == 0)
+            return;
         if (alpha == 255) {
             p = col;
             return;
         }
         uint16_t invAlpha = 255 - alpha;
 
-        unsigned int r = (unsigned int) p.r * invAlpha + (unsigned int) col.r * alpha;
-        unsigned int g = (unsigned int) p.g * invAlpha + (unsigned int) col.g * alpha;
-        unsigned int b = (unsigned int) p.b * invAlpha + (unsigned int) col.b * alpha;
+        unsigned int r = (unsigned int)p.r * invAlpha + (unsigned int)col.r * alpha;
+        unsigned int g = (unsigned int)p.g * invAlpha + (unsigned int)col.g * alpha;
+        unsigned int b = (unsigned int)p.b * invAlpha + (unsigned int)col.b * alpha;
 
         p.r = static_cast<uint8_t>(r >> 8);
         p.g = static_cast<uint8_t>(g >> 8);
@@ -48,26 +95,22 @@ inline void Rasterizer::blendPixel(int x, int y, const Pixel &col) {
     }
 }
 
-void Rasterizer::draw(const Gene &g) {
+void Rasterizer::draw(const Gene& g) {
     Pixel col{g.getColor().r, g.getColor().g, g.getColor().b, g.getColor().a};
+    sf::Vector2f size = g.getSize();
     switch (g.getType()) {
         case Gene::Shape::Circle:
-            drawCircle(static_cast<int>(g.getPos().x), static_cast<int>(g.getPos().y), g.getSize(), col);
+            drawCircle(static_cast<int>(g.getPos().x), static_cast<int>(g.getPos().y), size.x, col);
             break;
-        case Gene::Shape::Square: {
-            drawRectangle(g.getPos().x - g.getSize() / 2.0f, g.getPos().y - g.getSize() / 2.0f, g.getSize(),
-                          g.getSize(), col);
+        case Gene::Shape::Rectangle: {
+            drawRectangle(g.getPos().x - size.x / 2.0f, g.getPos().y - size.y / 2.0f, size.x, size.y, col);
             break;
         }
         case Gene::Shape::Triangle: {
             sf::Vector2f p0 = g.getPos();
-            float s = g.getSize();
+            float s = size.x;
 
-            sf::Vector2f points_relative[3] = {
-                {0.0f, 0.0f},
-                {s, 0.0f},
-                {s / 2.0f, s * 0.866025f}
-            };
+            sf::Vector2f points_relative[3] = {{0.0f, 0.0f}, {s, 0.0f}, {s / 2.0f, s * 0.866025f}};
 
             sf::Vector2f points_absolute[3];
             points_absolute[0] = p0 + points_relative[0];
@@ -80,7 +123,7 @@ void Rasterizer::draw(const Gene &g) {
     }
 }
 
-void Rasterizer::drawCircle(int cx, int cy, float radius, const Pixel &col) {
+void Rasterizer::drawCircle(int cx, int cy, float radius, const Pixel& col) {
     int r = static_cast<int>(radius);
     int r2 = r * r;
     int y_start = std::max(0, cy - r);
@@ -101,7 +144,7 @@ void Rasterizer::drawCircle(int cx, int cy, float radius, const Pixel &col) {
     }
 }
 
-void Rasterizer::drawRectangle(float x_f, float y_f, float w_f, float h_f, const Pixel &col) {
+void Rasterizer::drawRectangle(float x_f, float y_f, float w_f, float h_f, const Pixel& col) {
     int x0 = std::max(0, static_cast<int>(std::floor(x_f)));
     int y0 = std::max(0, static_cast<int>(std::floor(y_f)));
     int x1 = std::min(static_cast<int>(width_), static_cast<int>(std::ceil(x_f + w_f)));
@@ -114,7 +157,7 @@ void Rasterizer::drawRectangle(float x_f, float y_f, float w_f, float h_f, const
     }
 }
 
-void Rasterizer::drawTriangle(const sf::Vector2f pts[3], const Pixel &col) {
+void Rasterizer::drawTriangle(const sf::Vector2f pts[3], const Pixel& col) {
     float minXf = std::min({pts[0].x, pts[1].x, pts[2].x}, [](float a, float b) { return a < b; });
     float maxXf = std::max({pts[0].x, pts[1].x, pts[2].x}, [](float a, float b) { return a < b; });
     float minYf = std::min({pts[0].y, pts[1].y, pts[2].y}, [](float a, float b) { return a < b; });
@@ -125,9 +168,8 @@ void Rasterizer::drawTriangle(const sf::Vector2f pts[3], const Pixel &col) {
     int y_start = std::max(0, static_cast<int>(std::floor(minYf)));
     int y_end = std::min(static_cast<int>(height_), static_cast<int>(std::ceil(maxYf)));
 
-    auto edge = [&](const sf::Vector2f &a, const sf::Vector2f &b, float x, float y) {
-        return (long long) ((double) b.x - a.x) * ((double) y - a.y) - (long long) ((double) b.y - a.y) * (
-                   (double) x - a.x);
+    auto edge = [&](const sf::Vector2f& a, const sf::Vector2f& b, float x, float y) {
+        return (long long)((double)b.x - a.x) * ((double)y - a.y) - (long long)((double)b.y - a.y) * ((double)x - a.x);
     };
 
     long long edge_const[3][3];
@@ -135,11 +177,12 @@ void Rasterizer::drawTriangle(const sf::Vector2f pts[3], const Pixel &col) {
         int j = (i + 1) % 3;
         edge_const[i][0] = static_cast<long long>(pts[j].y - pts[i].y);
         edge_const[i][1] = static_cast<long long>(pts[i].x - pts[j].x);
-        edge_const[i][2] = static_cast<long long>((double) pts[j].x * pts[i].y - (double) pts[i].x * pts[j].y);
+        edge_const[i][2] = static_cast<long long>((double)pts[j].x * pts[i].y - (double)pts[i].x * pts[j].y);
     }
 
     long long area = edge(pts[0], pts[1], pts[2].x, pts[2].y);
-    if (area == 0) return;
+    if (area == 0)
+        return;
 
     bool clockwise = area > 0;
 

@@ -1,14 +1,16 @@
 #pragma once
 #include "Individual.h"
-#include <vector>
-#include <random>
+
 #include <SFML/Graphics.hpp>
 
-int tournamentSelect(const std::vector<float> &fitnessValues, std::mt19937 &rng, int tournamentSize = 5);
+#include <random>
+#include <vector>
 
-std::pair<Individual, Individual> onePointCrossover(const Individual &A, const Individual &B, std::mt19937 &rng);
+int tournamentSelect(const std::vector<float>& fitnessValues, std::mt19937& rng, int tournamentSize = 5);
 
-void onePointCrossover(const Individual &A, const Individual &B, Individual &C, Individual &D, std::mt19937 &rng);
+std::pair<Individual, Individual> onePointCrossover(const Individual& A, const Individual& B, std::mt19937& rng);
 
-bool mutateIndividual(Individual &individual, std::mt19937 &rng, unsigned canvasW, unsigned canvasH,
+void onePointCrossover(const Individual& A, const Individual& B, Individual& C, Individual& D, std::mt19937& rng);
+
+bool mutateIndividual(Individual& individual, std::mt19937& rng, unsigned canvasW, unsigned canvasH,
                       float mutationRate);
